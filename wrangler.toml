@@ -1,10 +1,11 @@
 name = "tafeng"
-main = "worker/index.ts"
+main = "dist/worker/index.mjs"
 compatibility_date = "2026-06-18"
 compatibility_flags = ["nodejs_compat"]
+no_bundle = true
 
 [build]
-external = ["*.node"]
+command = "node build-worker.mjs"
 
 [assets]
 directory = "./dist/client"
