@@ -165,7 +165,7 @@ async function handleTerminalSocket(request: Request, env: Env, _ctx: ExecutionC
   const language = parseLanguage(url.searchParams.get("language"));
   const profile = (await listConnections(env)).find((item) => item.id === profileId);
   const bridge = createSshBridge(server, {
-    profileName: profile?.name ?? "未命名 VPS",
+    profile,
     language,
     onCommand(command) {
       _ctx.waitUntil(

@@ -9,11 +9,12 @@ type Props = {
   connectionAttempt: number;
   language: Language;
   connectingLabel: string;
+  disconnectedLabel: string;
   onMetrics: (metrics: ServerMetrics, processes: ProcessInfo[]) => void;
   onCommandSubmitted?: () => void;
 };
 
-export function TerminalPane({ profileId, connectionAttempt, language, connectingLabel, onMetrics, onCommandSubmitted }: Props) {
+export function TerminalPane({ profileId, connectionAttempt, language, connectingLabel, disconnectedLabel, onMetrics, onCommandSubmitted }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -48,7 +49,14 @@ export function TerminalPane({ profileId, connectionAttempt, language, connectin
 
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal || !profileId) return;
+    if (!terminal) return;
+    if (!profileId) {
+      socketRef.current?.close();
+      socketRef.current = null;
+      terminal.clear();
+      if (connectionAttempt > 0) terminal.writeln(disconnectedLabel);
+      return;
+    }
 
     terminal.clear();
     terminal.writeln(connectingLabel);
@@ -61,6 +69,7 @@ export function TerminalPane({ profileId, connectionAttempt, language, connectin
 
     socket.addEventListener("open", () => {
       socket.send(JSON.stringify({ type: "hello", profileId } satisfies TerminalMessage));
+      socket.send(JSON.stringify({ type: "resize", cols: terminal.cols, rows: terminal.rows } satisfies TerminalMessage));
     });
     socket.addEventListener("message", (event) => {
       const message = JSON.parse(String(event.data)) as TerminalMessage;
@@ -72,12 +81,16 @@ export function TerminalPane({ profileId, connectionAttempt, language, connectin
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "input", data } satisfies TerminalMessage));
       if (data === "\r") window.setTimeout(() => onCommandSubmitted?.(), 300);
     });
+    const resizeDisposable = terminal.onResize(({ cols, rows }) => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", cols, rows } satisfies TerminalMessage));
+    });
 
     return () => {
       inputDisposable.dispose();
+      resizeDisposable.dispose();
       socket.close();
     };
-  }, [connectingLabel, connectionAttempt, language, onCommandSubmitted, onMetrics, profileId]);
+  }, [connectingLabel, connectionAttempt, disconnectedLabel, language, onCommandSubmitted, onMetrics, profileId]);
 
   return (
     <section className="terminal-wrap">

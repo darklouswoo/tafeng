@@ -1,4 +1,4 @@
-import { KeyRound, Pencil, Plus, Server, Trash2, X } from "lucide-react";
+import { KeyRound, Pencil, Plug, PlugZap, Plus, Server, Trash2, X } from "lucide-react";
 import { FormEvent, useState } from "react";
 import type { ServerProfile } from "../../shared/types";
 import type { TFunction } from "../lib/i18n";
@@ -8,13 +8,14 @@ type Props = {
   profiles: ServerProfile[];
   selectedId?: string;
   onSelect: (id: string) => void;
+  onDisconnect: (id: string) => void;
   onCreate: (profile: Omit<ServerProfile, "id" | "createdAt" | "updatedAt">) => void;
   onUpdate: (profile: ServerProfile) => void;
   onDelete: (id: string) => void;
   t: TFunction;
 };
 
-export function ConnectionPanel({ profiles, selectedId, onSelect, onCreate, onUpdate, onDelete, t }: Props) {
+export function ConnectionPanel({ profiles, selectedId, onSelect, onDisconnect, onCreate, onUpdate, onDelete, t }: Props) {
   const [draft, setDraft] = useState(emptyProfile);
   const [editingProfile, setEditingProfile] = useState<ServerProfile | null>(null);
 
@@ -69,6 +70,31 @@ export function ConnectionPanel({ profiles, selectedId, onSelect, onCreate, onUp
               </small>
             </button>
             <span className="connection-actions">
+              {profile.id === selectedId ? (
+                <button
+                  type="button"
+                  aria-label={t("disconnect")}
+                  title={t("disconnect")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDisconnect(profile.id);
+                  }}
+                >
+                  <PlugZap size={15} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  aria-label={t("connect")}
+                  title={t("connect")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelect(profile.id);
+                  }}
+                >
+                  <Plug size={15} />
+                </button>
+              )}
               <button
                 type="button"
                 aria-label={t("editConnection")}

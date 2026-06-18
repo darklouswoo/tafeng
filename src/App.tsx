@@ -60,6 +60,14 @@ export default function App() {
     setConnectionAttempt((attempt) => attempt + 1);
   }
 
+  function disconnectProfile(id: string) {
+    if (selectedId !== id) return;
+    setSelectedId(undefined);
+    setMetrics(undefined);
+    setProcesses([]);
+    setConnectionAttempt((attempt) => attempt + 1);
+  }
+
   async function createConnection(profile: Omit<ServerProfile, "id" | "createdAt" | "updatedAt">) {
     const created = await api.createConnection(profile);
     setProfiles((current) => [created, ...current]);
@@ -114,6 +122,7 @@ export default function App() {
           profiles={profiles}
           selectedId={selectedId}
           onSelect={connectProfile}
+          onDisconnect={disconnectProfile}
           onCreate={createConnection}
           onUpdate={updateConnection}
           onDelete={deleteConnection}
@@ -129,6 +138,7 @@ export default function App() {
             connectionAttempt={connectionAttempt}
             language={settings.language}
             connectingLabel={t("connecting")}
+            disconnectedLabel={t("disconnected")}
             onMetrics={handleMetrics}
             onCommandSubmitted={() => setHistoryRefreshKey((key) => key + 1)}
           />
