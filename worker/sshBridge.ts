@@ -31,7 +31,19 @@ export function createSshBridge(socket: WebSocket, options: SshBridgeOptions): S
   let shell: ClientChannel | null = null;
   let sftpSession: SFTPWrapper | null = null;
   let tcpStream: CloudflareSocketDuplex | null = null;
-  let currentLine = "";
+  /**
+   * Tracks the visible content of the current terminal line from shell output.
+   * Includes prompt + command text (e.g. "root@host:~# systemctl status nginx").
+   */
+  let outputLine = "";
+  /**
+   * The detected prompt string. Captured from outputLine when the first user
+   * input arrives after new shell output — at that point, whatever is on the
+   * line is the prompt waiting for input.
+   */
+  let detectedPrompt = "";
+  /** True when shell output arrived since the last user input — used for prompt detection. */
+  let promptDirty = true;
   let shellSize: ShellSize = { cols: 80, rows: 24 };
   let metricsTimer: ReturnType<typeof setInterval> | null = null;
   const uploadStreams = new Map<string, NodeJS.WritableStream>();
@@ -72,7 +84,11 @@ export function createSshBridge(socket: WebSocket, options: SshBridgeOptions): S
                 return;
               }
               shell = channel;
-              channel.on("data", (data: Buffer | string) => send({ type: "output", data: data.toString() }));
+              channel.on("data", (data: Buffer | string) => {
+                const text = data.toString();
+                trackOutputLine(text);
+                send({ type: "output", data: text });
+              });
               channel.stderr.on("data", (data: Buffer | string) => send({ type: "output", data: data.toString() }));
               channel.on("close", () => {
                 send({ type: "output", data: `\r\n${copy.sessionClosed}\r\n` });
@@ -119,24 +135,70 @@ export function createSshBridge(socket: WebSocket, options: SshBridgeOptions): S
     }
   }
 
+  /**
+   * Tracks the visible content of the current line from shell output.
+   * Handles \r (carriage return), \n (newline), and \b (backspace).
+   * Strips ANSI escape sequences so only visible text is kept.
+   */
+  function trackOutputLine(text: string) {
+    // Strip ANSI escape sequences (CSI, OSC, etc.)
+    const clean = text.replace(/\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][AB012]|[>=<])/g, "");
+    for (const char of clean) {
+      if (char === "\n") {
+        outputLine = "";
+        // After a newline, the next output is likely a new prompt.
+        // Mark dirty so the next user input captures it as the prompt.
+        promptDirty = true;
+      } else if (char === "\r") {
+        outputLine = "";
+      } else if (char === "\b") {
+        outputLine = outputLine.slice(0, -1);
+      } else {
+        // Only keep printable characters
+        if (char.charCodeAt(0) >= 32) {
+          outputLine += char;
+        }
+      }
+    }
+  }
+
+  /**
+   * Extracts the command from the current outputLine by stripping the prompt.
+   * outputLine contains "prompt + command" (e.g. "root@host:~# systemctl").
+   * The prompt was detected when the first user input arrived after shell output.
+   */
+  function extractCommand(): string {
+    const line = outputLine.trim();
+    if (detectedPrompt && line.startsWith(detectedPrompt)) {
+      return line.slice(detectedPrompt.length).trim();
+    }
+    // Fallback: try common prompt patterns ending with $, #, >, or %
+    const promptMatch = line.match(/^.*?[#$%>]\s*/);
+    if (promptMatch) {
+      return line.slice(promptMatch[0].length).trim();
+    }
+    return line;
+  }
+
   function handleInput(data: string) {
     if (!shell) return;
+    // Detect prompt: when user starts typing after new shell output,
+    // the current outputLine content is the prompt.
+    if (promptDirty) {
+      promptDirty = false;
+      detectedPrompt = outputLine.trim();
+    }
     shell?.write(data);
     if (data === "\r") {
-      const command = currentLine.trim();
-      currentLine = "";
+      const command = extractCommand();
+      outputLine = "";
       if (command) options.onCommand?.(command);
       return;
     }
-    if (data === "\u007f") {
-      currentLine = currentLine.slice(0, -1);
-      return;
-    }
     if (data === "\u0003") {
-      currentLine = "";
+      outputLine = "";
       return;
     }
-    currentLine += data.replace(/\p{C}/gu, "");
   }
 
   function handleResize(cols: number, rows: number) {
