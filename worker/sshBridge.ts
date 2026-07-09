@@ -48,6 +48,9 @@ export function createSshBridge(socket: WebSocket, options: SshBridgeOptions): S
   let shellSize: ShellSize = { cols: 80, rows: 24 };
   let metricsTimer: ReturnType<typeof setInterval> | null = null;
   const uploadStreams = new Map<string, NodeJS.WritableStream>();
+  let sshHandshakeStarted = false;
+  let sshReady = false;
+  let closeNotified = false;
 
   const MAX_READ_SIZE = 2 * 1024 * 1024;
   const MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024;
@@ -66,11 +69,21 @@ export function createSshBridge(socket: WebSocket, options: SshBridgeOptions): S
 
     try {
       const tcpSocket = connect({ hostname: host, port: profile.port });
+      await tcpSocket.opened;
       tcpStream = new CloudflareSocketDuplex(tcpSocket);
       conn = new Client();
+      sshHandshakeStarted = true;
+
+      tcpSocket.closed.catch((error) => {
+        if (!sshReady) {
+          const message = error instanceof Error ? error.message : String(error);
+          send({ type: "error", message: `${copy.tcpClosedBeforeReady}${message}` });
+        }
+      });
 
       conn
         .on("ready", () => {
+          sshReady = true;
           send({ type: "output", data: `${copy.authenticated}\r\n` });
           conn?.shell(
             {
@@ -106,9 +119,16 @@ export function createSshBridge(socket: WebSocket, options: SshBridgeOptions): S
         })
         .on("banner", (message) => send({ type: "output", data: `${message}\r\n` }))
         .on("error", (error) => send({ type: "error", message: `${copy.connectFailed}${error.message}` }))
-        .on("close", () => send({ type: "output", data: `\r\n${copy.connectionClosed}\r\n` }));
+        .on("close", () => {
+          if (!closeNotified) {
+            closeNotified = true;
+            send({ type: "output", data: `\r\n${copy.connectionClosed}\r\n` });
+          }
+        });
 
       conn.connect({
+        host,
+        port: profile.port,
         sock: tcpStream,
         username: profile.username,
         password: profile.credentialKind === "password" ? profile.password : undefined,
@@ -132,7 +152,7 @@ export function createSshBridge(socket: WebSocket, options: SshBridgeOptions): S
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : copy.unknownError;
-      send({ type: "error", message: `${copy.connectFailed}${message}` });
+      send({ type: "error", message: `${sshHandshakeStarted ? copy.connectFailed : copy.tcpConnectFailed}${message}` });
       close();
     }
   }
@@ -520,6 +540,8 @@ const terminalCopy = {
     sessionClosed: "SSH 会话已关闭",
     connectionClosed: "SSH 连接已断开",
     connectFailed: "连接失败：",
+    tcpConnectFailed: "TCP 连接失败：",
+    tcpClosedBeforeReady: "TCP 已连接但 SSH 握手前断开：",
     noProfile: "没有找到要连接的 VPS 配置",
     unknownError: "未知错误"
   },
@@ -531,6 +553,8 @@ const terminalCopy = {
     sessionClosed: "SSH session closed",
     connectionClosed: "SSH connection closed",
     connectFailed: "Connection failed: ",
+    tcpConnectFailed: "TCP connection failed: ",
+    tcpClosedBeforeReady: "TCP connected but closed before SSH handshake: ",
     noProfile: "No VPS profile was found for this connection",
     unknownError: "Unknown error"
   }
